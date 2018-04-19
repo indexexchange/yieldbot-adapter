@@ -19,20 +19,20 @@
 var Browser = require('browser.js');
 var Classify = require('classify.js');
 var Constants = require('constants.js');
+var Prms = require('prms.js');
 var Partner = require('partner.js');
-var Size = require('size.js');
 var SpaceCamp = require('space-camp.js');
 var System = require('system.js');
-var Network = require('network.js');
 var Utilities = require('utilities.js');
+var Whoopsie = require('whoopsie.js');
 var EventsService;
+var TimerService;
 var RenderService;
 
 //? if (DEBUG) {
 var ConfigValidators = require('config-validators.js');
 var PartnerSpecificValidator = require('yieldbot-htb-validator.js');
 var Scribe = require('scribe.js');
-var Whoopsie = require('whoopsie.js');
 //? }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -40,11 +40,12 @@ var Whoopsie = require('whoopsie.js');
 ////////////////////////////////////////////////////////////////////////////////
 
 /**
- * Partner module template
+ * The Yieldbot Module
  *
  * @class
  */
 function YieldbotHtb(configs) {
+
     /* =====================================
      * Data
      * ---------------------------------- */
@@ -53,323 +54,304 @@ function YieldbotHtb(configs) {
      * ---------------------------------- */
 
     /**
-     * Reference to the partner base class.
-     *
-     * @private {object}
+     * @private
+     * @type {Object}
      */
     var __baseClass;
 
     /**
-     * Profile for this partner.
-     *
-     * @private {object}
+     * @private
+     * @type {Object}
      */
     var __profile;
+
+    /**
+     * Variable to keep track of whether yieldbot.go() has been called.
+     * @private
+     * @type {Object}
+     */
+    var __goCalled;
+
+    /**
+     * Variable to keep track of whether a request has been timedOut.
+     * @private
+     * @type {Object}
+     */
+    var __timedOut;
+
+    /**
+     * Variable to keep track of the publisherId.
+     * @private
+     * @type {string}
+     */
+    var __publisherId;
 
     /* =====================================
      * Functions
      * ---------------------------------- */
 
-    /* Utilities
-     * ---------------------------------- */
-
-    /**
-     * Generates the request URL and query data to the endpoint for the xSlots
-     * in the given returnParcels.
-     *
-     * @param  {object[]} returnParcels
-     *
-     * @return {object}
-     */
-    function __generateRequestObj(returnParcels) {
-
-        /* =============================================================================
-         * STEP 2  | Generate Request URL
-         * -----------------------------------------------------------------------------
-         *
-         * Generate the URL to request demand from the partner endpoint using the provided
-         * returnParcels. The returnParcels is an array of objects each object containing
-         * an .xSlotRef which is a reference to the xSlot object from the partner configuration.
-         * Use this to retrieve the placements/xSlots you need to request for.
-         *
-         * If your partner is MRA, returnParcels will be an array of length one. If your
-         * partner is SRA, it will contain any number of entities. In any event, the full
-         * contents of the array should be able to fit into a single request and the
-         * return value of this function should similarly represent a single request to the
-         * endpoint.
-         *
-         * Return an object containing:
-         * queryUrl: the url for the request
-         * data: the query object containing a map of the query string paramaters
-         *
-         * callbackId:
-         *
-         * arbitrary id to match the request with the response in the callback function. If
-         * your endpoint supports passing in an arbitrary ID and returning it as part of the response
-         * please use the callbackType: Partner.CallbackTypes.ID and fill out the adResponseCallback.
-         * Also please provide this adResponseCallback to your bid request here so that the JSONP
-         * response calls it once it has completed.
-         *
-         * If your endpoint does not support passing in an ID, simply use
-         * Partner.CallbackTypes.CALLBACK_NAME and the wrapper will take care of handling request
-         * matching by generating unique callbacks for each request using the callbackId.
-         *
-         * If your endpoint is ajax only, please set the appropriate values in your profile for this,
-         * i.e. Partner.CallbackTypes.NONE and Partner.Requesttypes.AJAX. You also do not need to provide
-         * a callbackId in this case because there is no callback.
-         *
-         * The return object should look something like this:
-         * {
-         *     url: 'http://bidserver.com/api/bids' // base request url for a GET/POST request
-         *     data: { // query string object that will be attached to the base url
-         *        slots: [
-         *             {
-         *                 placementId: 54321,
-         *                 sizes: [[300, 250]]
-         *             },{
-         *                 placementId: 12345,
-         *                 sizes: [[300, 600]]
-         *             },{
-         *                 placementId: 654321,
-         *                 sizes: [[728, 90]]
-         *             }
-         *         ],
-         *         site: 'http://google.com'
-         *     },
-         *     callbackId: '_23sd2ij4i1' //unique id used for pairing requests and responses
-         * }
-         */
-
-        /* ---------------------- PUT CODE HERE ------------------------------------ */
-        var queryObj = {};
-        var callbackId = System.generateUniqueId();
-
-        /* Change this to your bidder endpoint.*/
-        var baseUrl = Browser.getProtocol() + '//someAdapterEndpoint.com/bid';
-
-        /* ---------------- Craft bid request using the above returnParcels --------- */
-
-
-        /* -------------------------------------------------------------------------- */
-
-        return {
-            url: baseUrl,
-            data: queryObj,
-            callbackId: callbackId
-        };
-    }
-
-    /* =============================================================================
-     * STEP 3  | Response callback
-     * -----------------------------------------------------------------------------
-     *
-     * This generator is only necessary if the partner's endpoint has the ability
-     * to return an arbitrary ID that is sent to it. It should retrieve that ID from
-     * the response and save the response to adResponseStore keyed by that ID.
-     *
-     * If the endpoint does not have an appropriate field for this, set the profile's
-     * callback type to CallbackTypes.CALLBACK_NAME and omit this function.
-     */
-    function adResponseCallback(adResponse) {
-        /* get callbackId from adResponse here */
-        var callbackId = 0;
-        __baseClass._adResponseStore[callbackId] = adResponse;
-    }
-    /* -------------------------------------------------------------------------- */
-
     /* Helpers
      * ---------------------------------- */
 
-    /* =============================================================================
-     * STEP 5  | Rendering Pixel
-     * -----------------------------------------------------------------------------
-     *
-    */
-
-     /**
-     * This function will render the pixel given.
-     * @param  {string} pixelUrl Tracking pixel img url.
+    /**
+     * Store demand yieldbot demand and appends any demand into outParcels.
+     * @param  {Object} sessionId The current session identifier.
+     * @param  {string} returnParcels The parcels that will be returned.
+     * @param  {string} outstandingXSlotNames The remaining xSlots.
      */
-    function __renderPixel(pixelUrl) {
-        if (pixelUrl){
-            Network.img({
-                url: decodeURIComponent(pixelUrl),
-                method: 'GET',
-            });
+    function __parseResponse(sessionId, returnParcels, outstandingXSlotNames) {
+
+        /* Signal that partner request was complete */
+        EventsService.emit('partner_request_complete', {
+            partner: __profile.partnerId,
+            status: 'success',
+            //? if (DEBUG) {
+            parcels: returnParcels
+                //? }
+        });
+
+        for (var i = 0; i < returnParcels.length; i++) {
+            var curReturnParcel = returnParcels[i];
+            var htSlotId = curReturnParcel.htSlot.getId();
+
+            /* criteria for your current slot */
+            var criteria = window.yieldbot.getSlotCriteria(curReturnParcel.xSlotRef.adSlotId);
+
+            /* Error */
+            if (!criteria || !Utilities.isNumeric(criteria.ybot_cpm)) { // jshint ignore: line
+                //? if (DEBUG) {
+                Scribe.warn('Yieldbot did not return slot criteria for ' + curReturnParcel.xSlotRef.adSlotId);
+                //? }
+
+                if (__profile.enabledAnalytics.requestTime) {
+                    EventsService.emit('hs_slot_error', {
+                        sessionId: sessionId,
+                        statsId: __profile.statsId,
+                        htSlotId: htSlotId,
+                        requestId: curReturnParcel.requestId,
+                        xSlotNames: [curReturnParcel.xSlotName]
+                    });
+                }
+
+                if (outstandingXSlotNames[htSlotId] && outstandingXSlotNames[htSlotId][curReturnParcel.requestId]) {
+                    Utilities.arrayDelete(outstandingXSlotNames[htSlotId][curReturnParcel.requestId], curReturnParcel.xSlotName);
+                }
+                continue;
+            }
+
+            /* Yieldbot pass */
+            if (criteria.ybot_ad === 'n' || Number(criteria.ybot_cpm) <= 0) { // jshint ignore: line
+                //? if (DEBUG) {
+                Scribe.info(__profile.partnerId + ' price was zero or did not meet floor for { id: ' + curReturnParcel.xSlotRef.adSlotId + ' }.');
+                //? }
+
+                curReturnParcel.pass = true;
+
+                continue;
+            }
+
+            /* Headerstats bid */
+            if (__profile.enabledAnalytics.requestTime) {
+
+                EventsService.emit('hs_slot_bid', {
+                    sessionId: sessionId,
+                    statsId: __profile.statsId,
+                    htSlotId: htSlotId,
+                    requestId: curReturnParcel.requestId,
+                    xSlotNames: [curReturnParcel.xSlotName]
+                });
+
+                if (outstandingXSlotNames[htSlotId] && outstandingXSlotNames[htSlotId][curReturnParcel.requestId]) {
+                    Utilities.arrayDelete(outstandingXSlotNames[htSlotId][curReturnParcel.requestId], curReturnParcel.xSlotName);
+                }
+            }
+
+            /* Yieldbot bid */
+            curReturnParcel.targetingType = 'slot';
+            curReturnParcel.targeting = {};
+
+            //? if(FEATURES.GPT_LINE_ITEMS) {
+            for (var key in criteria) {
+                if (!criteria.hasOwnProperty(key)) {
+                    continue;
+                }
+
+                var outputKey = key;
+                if (__baseClass._configs.targetingKeys.hasOwnProperty(key)) {
+                    outputKey = __baseClass._configs.targetingKeys[key];
+                }
+
+                if (key === 'ybot_cpm') {
+                    curReturnParcel.targeting[outputKey] = [__baseClass._bidTransformers.targeting.apply(criteria[key])];
+                } else {
+                    curReturnParcel.targeting[outputKey] = [criteria[key]];
+                }
+            }
+            //? }
+
+            //? if(FEATURES.RETURN_CREATIVE) {
+            curReturnParcel.adm = '<script type="text/javascript" src="//cdn.yldbt.com/js/yieldbot.intent.js"></script>' +
+                '<script type="text/javascript">' +
+                'var ybotq = ybotq || [];' +
+                'ybotq.push(function() {yieldbot.renderAd(' + criteria.ybot_slot + ':' + criteria.ybot_size + ');});' + // jshint ignore: line
+                '</script>';
+            //? }
+
+            //? if(FEATURES.RETURN_PRICE) {
+            curReturnParcel.price = Number(__baseClass._bidTransformers.price.apply(criteria.ybot_cpm)); // jshint ignore: line
+            //? }
+        }
+
+        if (__profile.enabledAnalytics.requestTime) {
+            __baseClass._emitStatsEvent(sessionId, 'hs_slot_pass', outstandingXSlotNames);
         }
     }
 
     /**
-     * Parses and extracts demand from adResponse according to the adapter and then attaches it
-     * to the corresponding bid's returnParcel in the correct format using targeting keys.
-     *
-     * @param {string} sessionId The sessionId, used for stats and other events.
-     *
-     * @param {any} adResponse This is the bid response as returned from the bid request, that was either
-     * passed to a JSONP callback or simply sent back via AJAX.
-     *
-     * @param {object[]} returnParcels The array of original parcels, SAME array that was passed to
-     * generateRequestObj to signal which slots need demand. In this funciton, the demand needs to be
-     * attached to each one of the objects for which the demand was originally requested for.
+     * Returns a unique timeout  callback based on the provided sessionId, used by the timer service.
+     * @param  {Object} sessionId The current session identifier.
+     * @param  {Object} requestId The current request identifier.
+     * @param  {Object} returnParcels The returnParcels for this request.
+     * @param  {Object} xSlotNames The remaining xSlots.
+     * @param  {Object} defer The defer object for this request.
      */
-    function __parseResponse(sessionId, adResponse, returnParcels) {
+    function __generateTimeoutCallback(sessionId, requestId, returnParcels, xSlotNames, defer) {
+        return function () {
 
-
-        /* =============================================================================
-         * STEP 4  | Parse & store demand response
-         * -----------------------------------------------------------------------------
-         *
-         * Fill the below variables with information about the bid from the partner, using
-         * the adResponse variable that contains your module adResponse.
-         */
-
-        /* This an array of all the bids in your response that will be iterated over below. Each of
-         * these will be mapped back to a returnParcel object using some criteria explained below.
-         * The following variables will also be parsed and attached to that returnParcel object as
-         * returned demand.
-         *
-         * Use the adResponse variable to extract your bid information and insert it into the
-         * bids array. Each element in the bids array should represent a single bid and should
-         * match up to a single element from the returnParcel array.
-         *
-         */
-
-        /* ---------- Process adResponse and extract the bids into the bids array ------------*/
-
-        var bids = adResponse;
-
-        /* --------------------------------------------------------------------------------- */
-
-        for (var j = 0; j < returnParcels.length; j++) {
-
-            var curReturnParcel = returnParcels[j];
-
-            var headerStatsInfo = {};
-            var htSlotId = curReturnParcel.htSlot.getId();
-            headerStatsInfo[htSlotId] = {};
-            headerStatsInfo[htSlotId][curReturnParcel.requestId] = [curReturnParcel.xSlotName];
-
-            var curBid;
-
-            for (var i = 0; i < bids.length; i++) {
-
-                /**
-                 * This section maps internal returnParcels and demand returned from the bid request.
-                 * In order to match them correctly, they must be matched via some criteria. This
-                 * is usually some sort of placements or inventory codes. Please replace the someCriteria
-                 * key to a key that represents the placement in the configuration and in the bid responses.
-                 */
-
-                /* ----------- Fill this out to find a matching bid for the current parcel ------------- */
-                if (curReturnParcel.xSlotRef.someCriteria === bids[i].someCriteria) {
-                    curBid = bids[i];
-                    bids.splice(i, 1);
-                    break;
-                }
+            /* If doesnt need to be timed out or already timed out, dont do anything. */
+            if (!__timedOut.hasOwnProperty(requestId) || __timedOut[requestId] === true) {
+                return;
             }
 
-            /* No matching bid found so its a pass */
-            if (!curBid) {
-                if (__profile.enabledAnalytics.requestTime) {
-                    __baseClass._emitStatsEvent(sessionId, 'hs_slot_pass', headerStatsInfo);
-                }
-                curReturnParcel.pass = true;
-                continue;
-            }
-
-            /* ---------- Fill the bid variables with data from the bid response here. ------------*/
-
-            /* Using the above variable, curBid, extract various information about the bid and assign it to
-             * these local variables */
-
-            /* the bid price for the given slot */
-            var bidPrice = curBid.price;
-
-            /* the size of the given slot */
-            var bidSize = [Number(curBid.width), Number(curBid.height)];
-
-            /* the creative/adm for the given slot that will be rendered if is the winner.
-             * Please make sure the URL is decoded and ready to be document.written.
-             */
-            var bidCreative = curBid.adm;
-
-            /* the dealId if applicable for this slot. */
-            var bidDealId = curBid.dealid;
-
-            /* explicitly pass */
-            var bidIsPass = bidPrice <= 0 ? true : false;
-
-            /* OPTIONAL: tracking pixel url to be fired AFTER rendering a winning creative.
-            * If firing a tracking pixel is not required or the pixel url is part of the adm,
-            * leave empty;
-            */
-            var pixelUrl = '';
-
-            /* ---------------------------------------------------------------------------------------*/
-
-            curBid = null;
-            if (bidIsPass) {
-                //? if (DEBUG) {
-                Scribe.info(__profile.partnerId + ' returned pass for { id: ' + adResponse.id + ' }.');
-                //? }
-                if (__profile.enabledAnalytics.requestTime) {
-                    __baseClass._emitStatsEvent(sessionId, 'hs_slot_pass', headerStatsInfo);
-                }
-                curReturnParcel.pass = true;
-                continue;
-            }
+            __timedOut[requestId] = true;
 
             if (__profile.enabledAnalytics.requestTime) {
-                __baseClass._emitStatsEvent(sessionId, 'hs_slot_bid', headerStatsInfo);
+                EventsService.emit('partner_request_complete', {
+                    partner: __profile.partnerId,
+                    status: 'timeout',
+                    //? if (DEBUG) {
+                    parcels: returnParcels,
+                    //? }
+                });
+
+                __baseClass._emitStatsEvent(sessionId, 'hs_slot_timeout', xSlotNames);
             }
+            defer.resolve(returnParcels);
+        };
+    }
 
-            curReturnParcel.size = bidSize;
-            curReturnParcel.targetingType = 'slot';
-            curReturnParcel.targeting = {};
+    /* Main
+     * ---------------------------------- */
 
-            var targetingCpm = '';
+    function __sendDemandRequest(sessionId, returnParcels) {
 
-            //? if (FEATURES.GPT_LINE_ITEMS) {
-            targetingCpm = __baseClass._bidTransformers.targeting.apply(bidPrice);
-            var sizeKey = Size.arrayToString(curReturnParcel.size);
+        /* Generate yieldbot slots & xSlotNames that are needed bvased on returnParcels */
+        var yieldbotSlots = {};
+        var xSlotNames = {};
 
-            if (bidDealId) {
-                curReturnParcel.targeting[__baseClass._configs.targetingKeys.pmid] = [sizeKey + '_' + bidDealId];
-                curReturnParcel.targeting[__baseClass._configs.targetingKeys.pm] = [sizeKey + '_' + targetingCpm];
-            } else {
-                curReturnParcel.targeting[__baseClass._configs.targetingKeys.om] = [sizeKey + '_' + targetingCpm];
+        for (var j = 0; j < returnParcels.length; j++) {
+            var curReturnParcel = returnParcels[j];
+            var xSlot = curReturnParcel.xSlotRef;
+
+            yieldbotSlots[xSlot.adSlotId] = xSlot.sizes || [];
+
+            /* Build xSlotNames for headerstats */
+            var htSlotId = curReturnParcel.htSlot.getId();
+
+            if (!xSlotNames.hasOwnProperty(htSlotId)) {
+                xSlotNames[htSlotId] = {};
             }
-            curReturnParcel.targeting[__baseClass._configs.targetingKeys.id] = [curReturnParcel.requestId];
-            //? }
-
-            //? if (FEATURES.RETURN_CREATIVE) {
-            curReturnParcel.adm = bidCreative;
-            if (pixelUrl) {
-                curReturnParcel.winNotice = __renderPixel.bind(null, pixelUrl);
+            if (!xSlotNames[htSlotId].hasOwnProperty(curReturnParcel.requestId)) {
+                xSlotNames[htSlotId][curReturnParcel.requestId] = [];
             }
-            //? }
-
-            //? if (FEATURES.RETURN_PRICE) {
-            curReturnParcel.price = Number(__baseClass._bidTransformers.price.apply(bidPrice));
-            //? }
-
-            var pubKitAdId = RenderService.registerAd({
-                sessionId: sessionId,
-                partnerId: __profile.partnerId,
-                adm: bidCreative,
-                requestId: curReturnParcel.requestId,
-                size: curReturnParcel.size,
-                price: targetingCpm,
-                dealId: bidDealId || undefined,
-                timeOfExpiry: __profile.features.demandExpiry.enabled ? (__profile.features.demandExpiry.value + System.now()) : 0,
-                auxFn: __renderPixel,
-                auxArgs: [pixelUrl]
-            });
-
-            //? if (FEATURES.INTERNAL_RENDER) {
-            curReturnParcel.targeting.pubKitAdId = pubKitAdId;
-            //? }
+            xSlotNames[htSlotId][curReturnParcel.requestId].push(curReturnParcel.xSlotName);
         }
+
+        /* Initialize requestId and timedOut variable to keep track of this request */
+        var requestId = System.generateUniqueId();
+        __timedOut[requestId] = false;
+
+        /* Create a new defer promise */
+        var defer = Prms.defer();
+
+        window.ybotq.push(function () {
+            /* Check with timer service to see if session is still in progress */
+            if (TimerService.getTimerState(sessionId) === TimerService.TimerStates.TERMINATED) {
+                return;
+            }
+
+            /* If first request, defined yieldbot slots and call yieldbot.go() */
+            if (!__goCalled) {
+                __goCalled = true;
+
+                /* Initial yieldbot request for new slots. */
+
+                /* Register publisher id */
+                window.yieldbot.pub(__publisherId);
+
+                /* Define yieldbot slots if first request */
+                for (var adSlotId in yieldbotSlots) {
+                    if (yieldbotSlots.hasOwnProperty(adSlotId)) {
+                        window.yieldbot.defineSlot(adSlotId, {
+                            sizes: yieldbotSlots[adSlotId]
+                        });
+                    }
+                }
+
+                /* Call .go to get new demand */
+                window.yieldbot.enableAsync();
+                window.yieldbot.go();
+            } else {
+                /* On subsequent requests, call nextPageView to request new demand for lazy loaded/refreshed slots */
+                window.yieldbot.nextPageview(yieldbotSlots);
+            }
+        });
+
+        /* Emit stat events */
+        EventsService.emit('partner_request_sent', {
+            partner: __profile.partnerId,
+            //? if (DEBUG) {
+            parcels: returnParcels
+                //? }
+        });
+
+        if (__profile.enabledAnalytics.requestTime) {
+            __baseClass._emitStatsEvent(sessionId, 'hs_slot_request', xSlotNames);
+        }
+
+        /* Add callback to yieldbot queue */
+        window.ybotq.push(function () {
+            if (TimerService.getTimerState(sessionId) === TimerService.TimerStates.TERMINATED) {
+                return defer.resolve([]);
+            }
+
+            if (!__timedOut[requestId]) {
+                delete __timedOut[requestId];
+                __parseResponse(sessionId, returnParcels, xSlotNames);
+                defer.resolve(returnParcels);
+            }
+        });
+
+        /* Generate a timeout function to timeout yieldbot */
+        var timeoutCallback = __generateTimeoutCallback(sessionId, requestId, returnParcels, xSlotNames, defer);
+        SpaceCamp.services.TimerService.addTimerCallback(sessionId, timeoutCallback);
+        if (__baseClass._configs.timeout) {
+            setTimeout(timeoutCallback, __baseClass._configs.timeout);
+        }
+
+        return defer.promise;
+    }
+
+    /* send requests for all slots in inParcels */
+    function __retriever(sessionId, inParcels) {
+        var returnParcelSets = __baseClass._generateReturnParcels(inParcels);
+        var demandRequestPromises = [];
+
+        for (var i = 0; i < returnParcelSets.length; i++) {
+            demandRequestPromises.push(__sendDemandRequest(sessionId, returnParcelSets[i]));
+        }
+
+        return demandRequestPromises;
     }
 
     /* =====================================
@@ -377,22 +359,15 @@ function YieldbotHtb(configs) {
      * ---------------------------------- */
 
     (function __constructor() {
-        EventsService = SpaceCamp.services.EventsService;
         RenderService = SpaceCamp.services.RenderService;
+        TimerService = SpaceCamp.services.TimerService;
+        EventsService = SpaceCamp.services.EventsService;
 
-        /* =============================================================================
-         * STEP 1  | Partner Configuration
-         * -----------------------------------------------------------------------------
-         *
-         * Please fill out the below partner profile according to the steps in the README doc.
-         */
-
-        /* ---------- Please fill out this partner profile according to your module ------------*/
         __profile = {
-            partnerId: 'YieldbotHtb', // PartnerName
-            namespace: 'YieldbotHtb', // Should be same as partnerName
-            statsId: 'YBOT', // Unique partner identifier
-            version: '2.1.1',
+            partnerId: 'YieldbotHtb',
+            namespace: 'YieldbotHtb',
+            statsId: 'YBOT',
+            version: '2.2.0',
             targetingType: 'slot',
             enabledAnalytics: {
                 requestTime: true
@@ -407,19 +382,20 @@ function YieldbotHtb(configs) {
                     value: 0
                 }
             },
-            targetingKeys: { // Targeting keys for demand, should follow format ix_{statsId}_id
+            targetingKeys: {
                 id: 'ix_ybot_id',
-                om: 'ix_ybot_cpm',
-                pm: 'ix_ybot_cpm',
-                pmid: 'ix_ybot_dealid'
+                /* This needs to exist to it can be registered with the render service. */
+                ybot_ad: 'ybot_ad', // jshint ignore: line
+                ybot_size: 'ybot_size', // jshint ignore: line
+                ybot_cpm: 'ybot_cpm', // jshint ignore: line
+                ybot_slot: 'ybot_slot' // jshint ignore: line
             },
-            bidUnitInCents: 1, // The bid price unit (in cents) the endpoint returns, please refer to the readme for details
+            bidUnitInCents: 1,
             lineItemType: Constants.LineItemTypes.ID_AND_SIZE,
-            callbackType: Partner.CallbackTypes.ID, // Callback type, please refer to the readme for details
-            architecture: Partner.Architectures.SRA, // Request architecture, please refer to the readme for details
-            requestType: Partner.RequestTypes.ANY // Request type, jsonp, ajax, or any.
+            callbackType: Partner.CallbackTypes.NONE,
+            architecture: Partner.Architectures.FSRA,
+            requestType: Partner.RequestTypes.ANY
         };
-        /* ---------------------------------------------------------------------------------------*/
 
         //? if (DEBUG) {
         var results = ConfigValidators.partnerBaseConfig(configs) || PartnerSpecificValidator(configs);
@@ -429,10 +405,24 @@ function YieldbotHtb(configs) {
         }
         //? }
 
-        __baseClass = Partner(__profile, configs, null, {
-            parseResponse: __parseResponse,
-            generateRequestObj: __generateRequestObj,
-            adResponseCallback: adResponseCallback
+        /* Yieldbot library */
+        var baseUrl = Browser.getProtocol() + '//cdn.yldbt.com/js/yieldbot.intent.js';
+
+        /* Initialize yieldbot queue */
+        window.ybotq = window.ybotq || [];
+        __goCalled = false;
+        __timedOut = {};
+
+        /* Define yieldbot publisherId & slots */
+        var deviceType = SpaceCamp.DeviceTypeChecker.getDeviceType();
+        if (!configs.publisherId.hasOwnProperty(deviceType)) {
+            throw Whoopsie('INVALID_CONFIG', 'publisherId not found for device type: ' + deviceType);
+        }
+
+        __publisherId = configs.publisherId[deviceType];
+
+        __baseClass = Partner(__profile, configs, [baseUrl], {
+            retriever: __retriever
         });
     })();
 
@@ -456,17 +446,15 @@ function YieldbotHtb(configs) {
          * ---------------------------------- */
 
         //? if (TEST) {
-        profile: __profile,
+        __profile: __profile,
         //? }
 
         /* Functions
          * ---------------------------------- */
 
         //? if (TEST) {
-        parseResponse: __parseResponse,
-        generateRequestObj: __generateRequestObj,
-        adResponseCallback: adResponseCallback,
-        //? }
+        __parseResponse: __parseResponse
+            //? }
     };
 
     return Classify.derive(__baseClass, derivedClass);
