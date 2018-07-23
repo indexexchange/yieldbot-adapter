@@ -193,7 +193,7 @@ function YieldbotHtb(configs) {
             curReturnParcel.adm = '<script type="text/javascript" src="//cdn.yldbt.com/js/yieldbot.intent.js"></script>' +
                 '<script type="text/javascript">' +
                 'var ybotq = ybotq || [];' +
-                'ybotq.push(function() {yieldbot.renderAd(' + criteria.ybot_slot + ':' + criteria.ybot_size + ');});' + // jshint ignore: line
+                'ybotq.push(function() {yieldbot.renderAd(' + criteria.ybot_slot + ':' + criteria.ybot_size + ':' + criteria.ybot_pvi + ');});' + // jshint ignore: line
                 '</script>';
             //? }
 
